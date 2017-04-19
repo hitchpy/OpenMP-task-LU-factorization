@@ -85,17 +85,21 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   {
     for(k=0; k<nt; k++){
       akk = A + k*NB*M + k*NB*NB;
-        #pragma omp task depend(inout: akk[0:NB*NB])
+        #pragma omp task depend(inout: akk[0:NB*NB]) firstprivate(akk)
       {
         dpotrf_("U", &NB, akk, &NB, &info);
       }
       for(i= k+1; i< nt; i++){
         aki = A+i*NB*M + k*NB*NB;
-        #pragma omp task depend(in: akk[0:NB*NB]) depend(inout: aki[0:NB*NB])
+        #pragma omp task depend(in: akk[0:NB*NB])    \
+                         depend(inout: aki[0:NB*NB]) \
+                         firstprivate(akk, aki)
         {
-          dtrsm_("l", "u", "n", "n", &NB, &NB, &alpha, akk, &NB, aki, &NB);
+          dtrsm_("l", "u", "t", "n", &NB, &NB, &alpha, akk,
+                 &NB, aki, &NB);
         }
       }
+      
       //Update trailing submatrix
       for(i= k+1; i<nt; i++){
         aki = A+i*NB*M + k*NB*NB;
@@ -104,20 +108,23 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
           aji = A+i*NB*M + j*NB*NB;
           #pragma omp task depend(in: aki[0:NB*NB])   \
                            depend(in: akj[0:NB*NB])   \
-                           depend(inout: aji[0:NB*NB])
+                           depend(inout: aji[0:NB*NB])\
+                           firstprivate(aki, akj, aji)
           {
             dgemm_("t", "n", &NB, &NB, &NB, &neg, akj,
-                  &NB, aki, &NB, &alpha, aji, &NB);
+                  &NB, aki, &NB, &alpha,aji, &NB);
 
           }
         }
         aii = A+i*NB*M + i*NB*NB;
-        #pragma omp task depend(in: aki[0:NB*NB]) depend(inout: aii[0:NB*NB])
+        #pragma omp task depend(in: aki[0:NB*NB])    \
+                         depend(inout: aii[0:NB*NB]) \
+                         firstprivate(aki, aii)
         {
-          dsyrk_("u", "t", &NB, &NB, &neg, aki, &NB, &alpha, aii, &NB);
+          dsyrk_("u", "t", &NB, &NB, &neg, aki, &NB,
+                 &alpha, aii, &NB);
         }
       }
-      
     }
   }
   
@@ -127,19 +134,32 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
 }
 
 int main(){
-  int i, j;
+  int i, j, info;
   int N = 8, M = 8, NB =2;
   double *pA = malloc(M*N*sizeof(double));
+  double *pB = malloc(M*N*sizeof(double));
   double *A = malloc(M*N*sizeof(double));
   int * ipiv;
   
   for(i=0; i< M; i++){
-    
-      pA[i+i*M] = M+i;
-    
+    pA[i+i*M] = pB[i+i*M] = M+i;
+  }
+  for(i=0; i< M-1; i++){
+    pA[i+(i+1)*M] = pB[i+(i+1)*M] = 0.5 + 1./(i+1);
+  }
+  for(i=0; i< M-1; i++){
+    pA[i+1+i*M] = pB[i+1+i*M] = 0.5 + 1./(i+1);
   }
   //ge2tile(A, pA, M, N, NB);
+  for(i=0; i< M; i++){
+    for(j=0; j< N; j++){
+      printf("%f ", pA[i+j*M]);
+    }
+    printf("\n");
+  }
+  printf("Solution\n");
   dgetrf_omp(M, N, NB, pA, ipiv);
+  
   //memset(pA,0, sizeof(double)*M*N);
   //tile2ge(A, pA, M, N, NB);
   
@@ -150,6 +170,13 @@ int main(){
     }
     printf("\n");
   }
-  
+  printf("LAPACK solution\n");
+  dpotrf_("U", &N, pB, &N, &info);
+  for(i=0; i< M; i++){
+    for(j=0; j< N; j++){
+      printf("%f ", pB[i+j*M]);
+    }
+    printf("\n");
+  }
   
 }
