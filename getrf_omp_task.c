@@ -9,7 +9,7 @@
 
 extern int  dgemm_(char *, char *, int *, int *, int *, double *, double *,
                       int *, double *, int *, double *, double *, int *);
-extern void dpotrf_(char*, int*, double*, int*, int *);
+extern void dgetrf_(int*, int*, double*, int*, int *, int*);
 
 extern int  dtrsm_(char *, char *, char *, char *, int *, int *,
                       double *, double *, int *, double *, int *);
@@ -72,50 +72,40 @@ void tile2ge(double *A, double *pA, int M, int N, int NB){
 
 void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   
-  int i, j, k, info;
+  int i, j, k, m, info;
   int mt = M/NB, nt = N/NB; // Assume M and N are multiples of tile size
   double alpha = 1., neg = -1.;
   double *A = malloc(M*N*sizeof(double));
-  double *akk, *aki, *akj, *aii, *aji;
+  double *akk;
+  int *iptr;
   //Translate LAPACK layout to tile layout
   ge2tile(A, pA, M, N, NB);
 
   #pragma omp parallel
   #pragma omp master
   {
-    for(k=0; k<nt; k++){
-      akk = A + k*NB*M + k*NB*NB;
-        #pragma omp task depend(inout: akk[0:NB*NB])
+    for(k=0; k< nt; k++){ //Loop over columns
+      //akk = A + k*NB*M + k*NB*NB;
+      m = M - k*NB;
+      //iptr = ipiv+k*NB;
+      // panel
+      #pragma omp task depend(inout: A[k*NB*M + k*NB*NB:m*NB])              \
+                       depend(out: ipiv[k*NB:NB])                 \
+                       firstprivate(k,m)
       {
-        dpotrf_("U", &NB, akk, &NB, &info);
+        tile2ge(A+k*NB*M, pA+k*NB*M, M, NB, NB);
+        
+        dgetrf_(&m, &NB, pA+k*NB*M+k*NB, &M, ipiv+k*NB, &info);
+        
+        //TODO: update the ipiv
+        
+        //convert back to tile layout
+        ge2tile(A+k*NB*M, pA+k*NB*M, M, NB, NB);
+        
       }
-      for(i= k+1; i< nt; i++){
-        aki = A+i*NB*M + k*NB*NB;
-        #pragma omp task depend(in: akk[0:NB*NB]) depend(inout: aki[0:NB*NB])
-        {
-          dtrsm_("l", "u", "n", "n", &NB, &NB, &alpha, akk, &NB, aki, &NB);
-        }
-      }
-      //Update trailing submatrix
-      for(i= k+1; i<nt; i++){
-        aki = A+i*NB*M + k*NB*NB;
-        for(j= k+1; j<i; j++){
-          akj = A+j*NB*M + k*NB*NB;
-          aji = A+i*NB*M + j*NB*NB;
-          #pragma omp task depend(in: aki[0:NB*NB])   \
-                           depend(in: akj[0:NB*NB])   \
-                           depend(inout: aji[0:NB*NB])
-          {
-            dgemm_("t", "n", &NB, &NB, &NB, &neg, akj,
-                  &NB, aki, &NB, &alpha, aji, &NB);
-
-          }
-        }
-        aii = A+i*NB*M + i*NB*NB;
-        #pragma omp task depend(in: aki[0:NB*NB]) depend(inout: aii[0:NB*NB])
-        {
-          dsyrk_("u", "t", &NB, &NB, &neg, aki, &NB, &alpha, aii, &NB);
-        }
+      // update trailing submatrix
+      for(i = k+1; i < nt; i++){
+        
       }
       
     }
@@ -126,22 +116,27 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   
 }
 
-int main(){
+int main(int argc, char *argv[]){
   int i, j;
-  int N = 8, M = 8, NB =2;
+  int N = 8, M = 16, NB =4;
   double *pA = malloc(M*N*sizeof(double));
   double *A = malloc(M*N*sizeof(double));
-  int * ipiv;
+  int * ipiv = malloc(M*sizeof(int));
+  char tmp[1024], *p;
+  FILE * fp;
+  fp = fopen(argv[1], "r");
+  
   
   for(i=0; i< M; i++){
-    
-      pA[i+i*M] = M+i;
-    
+    fgets(tmp, sizeof(tmp), fp);
+    p = strtok(tmp, ",");
+    for(j=0; j<N; j++){
+      pA[i+j*M] = atoi(p);
+      p = strtok(NULL, ",");
+    }
   }
-  //ge2tile(A, pA, M, N, NB);
+
   dgetrf_omp(M, N, NB, pA, ipiv);
-  //memset(pA,0, sizeof(double)*M*N);
-  //tile2ge(A, pA, M, N, NB);
   
   
   for(i=0; i< M; i++){
