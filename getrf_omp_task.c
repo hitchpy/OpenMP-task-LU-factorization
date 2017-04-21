@@ -15,6 +15,7 @@ extern int  dtrsm_(char *, char *, char *, char *, int *, int *,
                       double *, double *, int *, double *, int *);
 extern int  dsyrk_(char *, char *, int *, int *, double *, double *,
                       int *, double *, double *, int *);
+extern void cblas_dswap(int  , double *, int , double *, int);
 //=============================================================================
 
 void lacpy(char flag, double * source, double *dest, int M, int NB){
@@ -70,13 +71,26 @@ void tile2ge(double *A, double *pA, int M, int N, int NB){
   }
 }
 
+void core_zgeswp(double *A, int NB, int k1, int k2, int *ipiv){
+  int m, m1, m2;
+  for(m= k1; m<k2; m++){
+    if(ipiv[m]-1 != m){
+      m1 = m;
+      m2 = ipiv[m] - 1;
+      
+      cblas_dswap(NB, A+(m1/NB)*(NB*NB)+m1%NB, NB,
+                      A+(m2/NB)*(NB*NB)+m2%NB, NB);
+    }
+  }
+}
+
 void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   
   int i, j, k, m, info;
   int mt = M/NB, nt = N/NB; // Assume M and N are multiples of tile size
   double alpha = 1., neg = -1.;
   double *A = malloc(M*N*sizeof(double));
-  double *akk;
+  double *akk, *akj;
   int *iptr;
   //Translate LAPACK layout to tile layout
   ge2tile(A, pA, M, N, NB);
@@ -85,31 +99,64 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   #pragma omp master
   {
     for(k=0; k< nt; k++){ //Loop over columns
-      //akk = A + k*NB*M + k*NB*NB;
       m = M - k*NB;
-      //iptr = ipiv+k*NB;
+      akk = A + k*NB*M + k*NB*NB;
       // panel
-      #pragma omp task depend(inout: A[k*NB*M + k*NB*NB:m*NB])              \
-                       depend(out: ipiv[k*NB:NB])                 \
-                       firstprivate(k,m)
+      #pragma omp task depend(inout: A[k*NB*M:M*NB])    \
+                       depend(out: ipiv[k*NB:NB])    \
+                       firstprivate(akk,k,m)
       {
         tile2ge(A+k*NB*M, pA+k*NB*M, M, NB, NB);
         
         dgetrf_(&m, &NB, pA+k*NB*M+k*NB, &M, ipiv+k*NB, &info);
         
-        //TODO: update the ipiv
+        //update the ipiv
+        for(i=k*NB; i< M; i++){
+          ipiv[i] += k*NB;
+        }
         
         //convert back to tile layout
         ge2tile(A+k*NB*M, pA+k*NB*M, M, NB, NB);
         
       }
+      
       // update trailing submatrix
-      for(i = k+1; i < nt; i++){
+      for(j = k+1; j < nt; j++){
+        akj = A+j*NB*M+k*NB*NB; // TRSM and submatrix in this column
         
+        #pragma omp task depend(in: akk[0:m*NB])                 \
+                         depend(in: ipiv[k*NB:NB])               \
+                         depend(inout: akj[0: m*NB])             \
+                         firstprivate(akk, akj, j, k, m)
+        {
+          // laswp
+          for(i=k*NB; i< k*NB+NB; i++){
+            printf("%d\n", ipiv[i]);
+          }
+          int k1 = k*NB;
+          int k2 = k*NB+NB;
+          core_zgeswp(A+j*NB*M, NB, k1, k2, ipiv);
+          
+          // trsm
+          dtrsm_("l", "l", "n", "u", &NB, &NB,
+                 &alpha, akk, &NB, akj, &NB);
+          
+          // gemm
+          for(i= k+1; i< mt; i++){
+            dgemm_("n", "n", &NB, &NB, &NB,
+                   &neg, A+k*NB*M + i*NB*NB,
+                   &NB, akj, &NB,
+                   &alpha, A+j*NB*M + i*NB*NB, &NB);
+          }
+          
+        }
+      
       }
       
     }
   }
+  
+  // pivoting to the left. Is this correct???
   
   //Translate tile layout back to LAPACK layout
   tile2ge(A, pA, M, N, NB);
@@ -124,8 +171,9 @@ int main(int argc, char *argv[]){
   int * ipiv = malloc(M*sizeof(int));
   char tmp[1024], *p;
   FILE * fp;
-  fp = fopen(argv[1], "r");
   
+  //Read in data
+  fp = fopen(argv[1], "r");
   
   for(i=0; i< M; i++){
     fgets(tmp, sizeof(tmp), fp);
@@ -135,7 +183,10 @@ int main(int argc, char *argv[]){
       p = strtok(NULL, ",");
     }
   }
-
+  for(i=0; i<N; i++){
+    ipiv[i] = i;
+  }
+  
   dgetrf_omp(M, N, NB, pA, ipiv);
   
   
@@ -146,5 +197,10 @@ int main(int argc, char *argv[]){
     printf("\n");
   }
   
+  printf("IPIV\n");
+  for(i=0; i<N; i++){
+    printf("%d, ", ipiv[i]);
+  }
+  printf("\n");
   
 }
