@@ -86,7 +86,7 @@ void core_zgeswp(double *A, int NB, int k1, int k2, int *ipiv){
 
 void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   
-  int i, j, k, m, info;
+  int info;
   int mt = M/NB, nt = N/NB; // Assume M and N are multiples of tile size
   double alpha = 1., neg = -1.;
   double *A = malloc(M*N*sizeof(double));
@@ -98,20 +98,21 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   #pragma omp parallel
   #pragma omp master
   {
-    for(k=0; k< nt; k++){ //Loop over columns
-      m = M - k*NB;
+    for(int k=0; k< nt; k++){ //Loop over columns
+      int m = M - k*NB;
       akk = A + k*NB*M + k*NB*NB;
       // panel
       #pragma omp task depend(inout: A[k*NB*M:M*NB])    \
                        depend(out: ipiv[k*NB:NB])    \
-                       firstprivate(akk,k,m)
+                       firstprivate(akk, m)
       {
+        printf("panel %d %f\n", k, omp_get_wtime());
         tile2ge(A+k*NB*M, pA+k*NB*M, M, NB, NB);
         
         dgetrf_(&m, &NB, pA+k*NB*M+k*NB, &M, ipiv+k*NB, &info);
         
         //update the ipiv
-        for(i=k*NB; i< M; i++){
+        for(int i=k*NB; i< k*NB+NB; i++){
           ipiv[i] += k*NB;
         }
         
@@ -121,18 +122,17 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
       }
       
       // update trailing submatrix
-      for(j = k+1; j < nt; j++){
+      for(int j = k+1; j < nt; j++){
         akj = A+j*NB*M+k*NB*NB; // TRSM and submatrix in this column
         
-        #pragma omp task depend(in: akk[0:m*NB])                 \
+        #pragma omp task depend(in: A[k*NB*M:M*NB])              \
                          depend(in: ipiv[k*NB:NB])               \
-                         depend(inout: akj[0: m*NB])             \
-                         firstprivate(akk, akj, j, k, m)
+                         depend(inout: A[j*NB*M: M*NB])             \
+                         firstprivate(akk, akj, m)
         {
+          printf("update %d, %d %f\n", k, j,omp_get_wtime());
           // laswp
-          for(i=k*NB; i< k*NB+NB; i++){
-            printf("%d\n", ipiv[i]);
-          }
+
           int k1 = k*NB;
           int k2 = k*NB+NB;
           core_zgeswp(A+j*NB*M, NB, k1, k2, ipiv);
@@ -142,7 +142,7 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
                  &alpha, akk, &NB, akj, &NB);
           
           // gemm
-          for(i= k+1; i< mt; i++){
+          for(int i= k+1; i< mt; i++){
             dgemm_("n", "n", &NB, &NB, &NB,
                    &neg, A+k*NB*M + i*NB*NB,
                    &NB, akj, &NB,
@@ -165,7 +165,7 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
 
 int main(int argc, char *argv[]){
   int i, j;
-  int N = 8, M = 16, NB =4;
+  int N = 8, M = 16, NB =2;
   double *pA = malloc(M*N*sizeof(double));
   double *A = malloc(M*N*sizeof(double));
   int * ipiv = malloc(M*sizeof(int));
@@ -183,6 +183,13 @@ int main(int argc, char *argv[]){
       p = strtok(NULL, ",");
     }
   }
+  
+  //Generate diag data
+  /*
+  for(i=0; i< N; i++){
+    pA[i+i*N] = i;
+  }
+  */
   for(i=0; i<N; i++){
     ipiv[i] = i;
   }
