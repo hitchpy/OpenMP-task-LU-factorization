@@ -92,9 +92,11 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   double *A = malloc(M*N*sizeof(double));
   double *akk, *akj;
   int *iptr;
+  double time1, time2, elapsed;
   //Translate LAPACK layout to tile layout
   ge2tile(A, pA, M, N, NB);
-
+  
+  time1 = omp_get_wtime();
   #pragma omp parallel
   #pragma omp master
   {
@@ -106,7 +108,6 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
                        depend(out: ipiv[k*NB:NB])    \
                        firstprivate(akk, m)
       {
-        printf("panel %d %f\n", k, omp_get_wtime());
         tile2ge(A+k*NB*M, pA+k*NB*M, M, NB, NB);
         
         dgetrf_(&m, &NB, pA+k*NB*M+k*NB, &M, ipiv+k*NB, &info);
@@ -130,9 +131,7 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
                          depend(inout: A[j*NB*M: M*NB])             \
                          firstprivate(akk, akj, m)
         {
-          printf("update %d, %d %f\n", k, j,omp_get_wtime());
           // laswp
-
           int k1 = k*NB;
           int k2 = k*NB+NB;
           core_zgeswp(A+j*NB*M, NB, k1, k2, ipiv);
@@ -156,21 +155,30 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
     }
   }
   
-  // pivoting to the left. Is this correct???
-  
+  time2 = omp_get_wtime();
+  elapsed = time2 - time1;
+  // pivoting to the left.
+  for(int k =1; k < nt; k++){
+    int k1 = k*NB;
+    int k2 = N; // Assume M >= N
+    core_zgeswp(A+(k-1)*NB*M, NB, k1, k2, ipiv);
+  }
   //Translate tile layout back to LAPACK layout
   tile2ge(A, pA, M, N, NB);
   
+  printf("Time is %f, Flops is %f\n", elapsed, 2.*N*N*N/(3.*elapsed*1e9));
 }
 
 int main(int argc, char *argv[]){
   int i, j;
+  //int N = atoi(argv[1]), M = atoi(argv[1]), NB =200;
   int N = 8, M = 16, NB =2;
   double *pA = malloc(M*N*sizeof(double));
   double *A = malloc(M*N*sizeof(double));
   int * ipiv = malloc(M*sizeof(int));
   char tmp[1024], *p;
   FILE * fp;
+  
   
   //Read in data
   fp = fopen(argv[1], "r");
@@ -183,9 +191,9 @@ int main(int argc, char *argv[]){
       p = strtok(NULL, ",");
     }
   }
-  
-  //Generate diag data
   /*
+  //Generate diag data
+  
   for(i=0; i< N; i++){
     pA[i+i*N] = i;
   }
