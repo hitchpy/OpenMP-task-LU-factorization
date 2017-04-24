@@ -16,6 +16,7 @@ extern int  dtrsm_(char *, char *, char *, char *, int *, int *,
 extern int  dsyrk_(char *, char *, int *, int *, double *, double *,
                       int *, double *, double *, int *);
 extern void cblas_dswap(int  , double *, int , double *, int);
+extern void cblas_daxpy(int , double , double *x, int , double *, int);
 //=============================================================================
 
 void lacpy(char flag, double * source, double *dest, int M, int NB){
@@ -155,14 +156,20 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
     }
   }
   
-  time2 = omp_get_wtime();
-  elapsed = time2 - time1;
+  
   // pivoting to the left.
   for(int k =1; k < nt; k++){
     int k1 = k*NB;
     int k2 = N; // Assume M >= N
-    core_zgeswp(A+(k-1)*NB*M, NB, k1, k2, ipiv);
+    #pragma omp task firstprivate(k, k1, k2)
+    {
+      core_zgeswp(A+(k-1)*NB*M, NB, k1, k2, ipiv);
+    }
   }
+  
+  time2 = omp_get_wtime();
+  elapsed = time2 - time1;
+  
   //Translate tile layout back to LAPACK layout
   tile2ge(A, pA, M, N, NB, M);
   
@@ -170,16 +177,18 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
 }
 
 int main(int argc, char *argv[]){
-  int i, j;
-  //int N = atoi(argv[1]), M = atoi(argv[1]), NB =200;
-  int N = 8, M = 16, NB =2;
+  int i, j, info;
+  int N = atoi(argv[1]), M = atoi(argv[1]), NB =4;
+  double neg = -1.0;
+  //int N = 8, M = 16, NB =2;
   double *pA = malloc(M*N*sizeof(double));
+  double *pB = malloc(M*N*sizeof(double));
   double *A = malloc(M*N*sizeof(double));
   int * ipiv = malloc(M*sizeof(int));
   char tmp[1024], *p;
   FILE * fp;
   
-  
+  /*
   //Read in data
   fp = fopen(argv[1], "r");
   
@@ -191,31 +200,38 @@ int main(int argc, char *argv[]){
       p = strtok(NULL, ",");
     }
   }
-  /*
+  */
+  
   //Generate diag data
   
   for(i=0; i< N; i++){
-    pA[i+i*N] = i;
+    for(j=0; j< M; j++)
+      pA[j+i*N] = pB[j+i*N] = ((double)rand())/RAND_MAX*10.;
   }
-  */
+  
   for(i=0; i<N; i++){
     ipiv[i] = i;
   }
   
   dgetrf_omp(M, N, NB, pA, ipiv);
   
+  //Result validation
+  dgetrf_(&M, &N, pB, &M, ipiv, &info);
+  
+  cblas_daxpy(M*N, neg, pA, 1, pB, 1);
+  
   
   for(i=0; i< M; i++){
     for(j=0; j< N; j++){
-      printf("%f ", pA[i+j*M]);
+      printf("%f ", pB[i+j*M]);
     }
     printf("\n");
   }
-  
+  /*
   printf("IPIV\n");
   for(i=0; i<N; i++){
     printf("%d, ", ipiv[i]);
   }
   printf("\n");
-  
+  */
 }
