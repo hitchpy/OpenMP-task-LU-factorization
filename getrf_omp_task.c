@@ -39,7 +39,7 @@ void lacpy(char flag, double * source, double *dest, int M, int NB){
   
 }
 
-void ge2tile(double *A, double *pA, int M, int N, int NB){
+void ge2tile(double *A, double *pA, int M, int N, int NB, int LDA){
   int mt = M/NB, nt = N/NB;
   int n, m;
   double * tptr;
@@ -47,15 +47,15 @@ void ge2tile(double *A, double *pA, int M, int N, int NB){
   for(n=0; n< nt; n++){
     for(m=0; m< mt; m++){
       
-      tptr = A + n*NB*M + m*NB*NB;
-      cptr = pA + n*NB*M + m*NB;
-      lacpy('t', cptr, tptr, M, NB);
+      tptr = A + n*NB*LDA + m*NB*NB;
+      cptr = pA + n*NB*LDA + m*NB;
+      lacpy('t', cptr, tptr, LDA, NB);
 
     }
   }
 }
 
-void tile2ge(double *A, double *pA, int M, int N, int NB){
+void tile2ge(double *A, double *pA, int M, int N, int NB, int LDA){
   int mt = M/NB, nt = N/NB;
   int n,m;
   double *tptr;
@@ -63,9 +63,9 @@ void tile2ge(double *A, double *pA, int M, int N, int NB){
   for(n=0; n< nt; n++){
     for(m=0; m< mt; m++){
       
-      tptr = A + n*NB*M + m*NB*NB;
-      cptr = pA + n*NB*M + m*NB;
-      lacpy('c', tptr, cptr, M, NB);
+      tptr = A + n*NB*LDA + m*NB*NB;
+      cptr = pA + n*NB*LDA + m*NB;
+      lacpy('c', tptr, cptr, LDA, NB);
       
     }
   }
@@ -94,7 +94,7 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   int *iptr;
   double time1, time2, elapsed;
   //Translate LAPACK layout to tile layout
-  ge2tile(A, pA, M, N, NB);
+  ge2tile(A, pA, M, N, NB, M);
   
   time1 = omp_get_wtime();
   #pragma omp parallel
@@ -108,7 +108,7 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
                        depend(out: ipiv[k*NB:NB])    \
                        firstprivate(akk, m)
       {
-        tile2ge(A+k*NB*M, pA+k*NB*M, M, NB, NB);
+        tile2ge(A+k*NB*M+k*NB*NB, pA+k*NB*M+k*NB, m, NB, NB, M);
         
         dgetrf_(&m, &NB, pA+k*NB*M+k*NB, &M, ipiv+k*NB, &info);
         
@@ -118,7 +118,7 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
         }
         
         //convert back to tile layout
-        ge2tile(A+k*NB*M, pA+k*NB*M, M, NB, NB);
+        ge2tile(A+k*NB*M+k*NB*NB, pA+k*NB*M+k*NB, m, NB, NB, M);
         
       }
       
@@ -164,7 +164,7 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
     core_zgeswp(A+(k-1)*NB*M, NB, k1, k2, ipiv);
   }
   //Translate tile layout back to LAPACK layout
-  tile2ge(A, pA, M, N, NB);
+  tile2ge(A, pA, M, N, NB, M);
   
   printf("Time is %f, Flops is %f\n", elapsed, 2.*N*N*N/(3.*elapsed*1e9));
 }
