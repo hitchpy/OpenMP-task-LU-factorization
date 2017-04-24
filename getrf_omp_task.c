@@ -91,7 +91,6 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   double alpha = 1., neg = -1.;
   double *A = malloc(M*N*sizeof(double));
   double time1, time2, elapsed;
-  double * akk, *akj;
   //Translate LAPACK layout to tile layout
   ge2tile(A, pA, M, N, NB, M);
   
@@ -101,9 +100,9 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   {
     for(int k=0; k< nt; k++){ //Loop over columns
       int m = M - k*NB;
-      akk = A + k*NB*M + k*NB*NB;
+      double *akk = A + k*NB*M + k*NB*NB;
       // panel
-      #pragma omp task depend(inout: A[k*NB*M:M*NB])    \
+      #pragma omp task depend(inout: akk[0:m*NB])    \
                        depend(out: ipiv[k*NB:NB])       \
                        firstprivate(akk, m)
       {
@@ -123,11 +122,14 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
       
       // update trailing submatrix
       for(int j = k+1; j < nt; j++){
-        akj = A+j*NB*M+k*NB*NB; // TRSM
-        #pragma omp task depend(in: A[k*NB*M:M*NB])                 \
+        double *akj  = A+j*NB*M+k*NB*NB; // TRSM
+        double *ak_j = A+j*NB*M+(k+1)*NB*NB;
+        int mm = M-(k+1)*NB;
+        #pragma omp task depend(in: akk[0:m*NB])                 \
                          depend(in: ipiv[k*NB:NB])                  \
-                         depend(inout:A[j*NB*M:M*NB])             \
-                         firstprivate(akk, akj, m)
+                         depend(inout:akj[0, NB*NB])                 \
+                         depend(inout:ak_j[0:mm*NB])             \
+                         firstprivate(akk, akj, ak_j, mm, m)
         {
           // laswp
           int k1 = k*NB;
