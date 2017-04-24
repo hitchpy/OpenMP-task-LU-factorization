@@ -126,7 +126,7 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
         akj = A+j*NB*M+k*NB*NB; // TRSM
         #pragma omp task depend(in: A[k*NB*M:M*NB])                 \
                          depend(in: ipiv[k*NB:NB])                  \
-                         depend(inout:A[j*NB*M, M*NB])             \
+                         depend(inout:A[j*NB*M:M*NB])             \
                          firstprivate(akk, akj, m)
         {
           // laswp
