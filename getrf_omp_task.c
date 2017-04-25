@@ -154,18 +154,21 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
       }
       
     }
-  }
-  
-  
-  // pivoting to the left.
-  for(int k =1; k < nt; k++){
-    int k1 = k*NB;
-    int k2 = N; // Assume M >= N
-    #pragma omp task firstprivate(k, k1, k2)
-    {
-      core_zgeswp(A+(k-1)*NB*M, NB, k1, k2, ipiv);
+    
+    // pivoting to the left.
+    for(int t =1; t < nt; t++){
+      int k1 = t*NB;
+      int k2 = N; // Assume M >= N
+      
+      #pragma omp task depend(in:ipiv[(nt-1)*NB:NB]) \
+                       depend(inout:A[t*NB*M:M*NB])
+      {
+        core_zgeswp(A+(t-1)*NB*M, NB, t*NB, N, ipiv);
+      }
     }
-  }
+  } // End of parallel region
+  
+  
   
   time2 = omp_get_wtime();
   elapsed = time2 - time1;
@@ -178,7 +181,7 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
 
 int main(int argc, char *argv[]){
   int i, j, info;
-  int N = atoi(argv[1]), M = atoi(argv[1]), NB =4;
+  int N = atoi(argv[1]), M = atoi(argv[1]), NB =200;
   double neg = -1.0;
   //int N = 8, M = 16, NB =2;
   double *pA = malloc(M*N*sizeof(double));
@@ -220,13 +223,14 @@ int main(int argc, char *argv[]){
   
   cblas_daxpy(M*N, neg, pA, 1, pB, 1);
   
-  
+  /*
   for(i=0; i< M; i++){
     for(j=0; j< N; j++){
       printf("%f ", pB[i+j*M]);
     }
     printf("\n");
   }
+  */
   /*
   printf("IPIV\n");
   for(i=0; i<N; i++){
