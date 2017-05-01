@@ -17,6 +17,7 @@ extern int  dsyrk_(char *, char *, int *, int *, double *, double *,
                       int *, double *, double *, int *);
 extern void cblas_dswap(int  , double *, int , double *, int);
 extern void cblas_daxpy(int , double , double *x, int , double *, int);
+extern double cblas_dnrm2(const int, const double *, const int);
 //=============================================================================
 
 void lacpy(char flag, double * source, double *dest, int M, int NB){
@@ -176,36 +177,23 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   //Translate tile layout back to LAPACK layout
   tile2ge(A, pA, M, N, NB, M);
   
-  printf("Time is %f, Flops is %f\n", elapsed, 2.*N*N*N/(3.*elapsed*1e9));
+  printf("My time is %f, Flops is %f\n", elapsed, 2.*N*N*N/(3.*elapsed*1e9));
 }
 
 int main(int argc, char *argv[]){
   int i, j, info;
   int N = atoi(argv[1]), M = atoi(argv[1]), NB =200;
   double neg = -1.0;
-  //int N = 8, M = 16, NB =2;
   double *pA = malloc(M*N*sizeof(double));
   double *pB = malloc(M*N*sizeof(double));
   double *A = malloc(M*N*sizeof(double));
   int * ipiv = malloc(M*sizeof(int));
   char tmp[1024], *p;
   FILE * fp;
+  double time1, time2, elapsed;
   
-  /*
-  //Read in data
-  fp = fopen(argv[1], "r");
   
-  for(i=0; i< M; i++){
-    fgets(tmp, sizeof(tmp), fp);
-    p = strtok(tmp, ",");
-    for(j=0; j<N; j++){
-      pA[i+j*M] = atoi(p);
-      p = strtok(NULL, ",");
-    }
-  }
-  */
-  
-  //Generate diag data
+  //Generate random data
   
   for(i=0; i< N; i++){
     for(j=0; j< M; j++)
@@ -216,26 +204,32 @@ int main(int argc, char *argv[]){
     ipiv[i] = i;
   }
   
+  //Calling my LU decomposition
+  
   dgetrf_omp(M, N, NB, pA, ipiv);
   
   //Result validation
+  
+  time1 = omp_get_wtime();
   dgetrf_(&M, &N, pB, &M, ipiv, &info);
+  time2 = omp_get_wtime();
+  elapsed = time2 - time1;
+  
+  printf("LAPACK time is %f, Flops is %f\n", elapsed, 2.*N*N*N/(3.*elapsed*1e9));
   
   cblas_daxpy(M*N, neg, pA, 1, pB, 1);
+  printf("Error: %e\n", cblas_dnrm2(M*N, pB, 1));
   
-  /*
-  for(i=0; i< M; i++){
-    for(j=0; j< N; j++){
+  for(i=0; i< 10; i++){
+    for(j=0; j< 10; j++){
       printf("%f ", pB[i+j*M]);
     }
     printf("\n");
   }
-  */
-  /*
-  printf("IPIV\n");
-  for(i=0; i<N; i++){
-    printf("%d, ", ipiv[i]);
+  for(i=0; i< 10; i++){
+    for(j=0; j< 10; j++){
+      printf("%f ", pA[i+j*M]);
+    }
+    printf("\n");
   }
-  printf("\n");
-  */
 }
