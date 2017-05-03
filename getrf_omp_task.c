@@ -92,11 +92,10 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   int mt = M/NB, nt = N/NB; // Assume M and N are multiples of tile size
   double alpha = 1., neg = -1.;
   double *A = malloc(M*N*sizeof(double));
-  double *akk, *akj;
-  int *iptr;
   double time1, time2, elapsed;
   //Translate LAPACK layout to tile layout
   ge2tile(A, pA, M, N, NB, M);
+
   time1 = omp_get_wtime();
  
   #pragma omp parallel
@@ -104,13 +103,15 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   {
     for(int k=0; k< nt; k++){ //Loop over columns
       int m = M - k*NB;
-      akk = A + k*NB*M + k*NB*NB;
+      double *akk = A + k*NB*M + k*NB*NB;
       // panel
-      #pragma omp task depend(inout: A[k*NB*M:M*NB])    \
-                       depend(out: ipiv[k*NB:NB])    \
+      #pragma omp task depend(inout: akk[0:m*NB])    \
+                       depend(out: ipiv[k*NB:NB])       \
                        firstprivate(akk, m)
       {
+
         tile2ge(A+k*NB*M+k*NB*NB, pA+k*NB*M+k*NB, m, NB, NB, M);
+
         
         dgetrf_(&m, &NB, pA+k*NB*M+k*NB, &M, ipiv+k*NB, &info);
         
@@ -120,18 +121,22 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
         }
         
         //convert back to tile layout
+
         ge2tile(A+k*NB*M+k*NB*NB, pA+k*NB*M+k*NB, m, NB, NB, M);
+
         
       }
       
       // update trailing submatrix
       for(int j = k+1; j < nt; j++){
-        akj = A+j*NB*M+k*NB*NB; // TRSM and submatrix in this column
-        
-        #pragma omp task depend(in: A[k*NB*M:M*NB])              \
-                         depend(in: ipiv[k*NB:NB])               \
-                         depend(inout: A[j*NB*M: M*NB])             \
-                         firstprivate(akk, akj, m)
+        double *akj  = A+j*NB*M+k*NB*NB; // TRSM
+        double *ak_j = A+j*NB*M+(k+1)*NB*NB;
+        int mm = M-(k+1)*NB;
+        #pragma omp task depend(in: akk[0:m*NB])                 \
+                         depend(in: ipiv[k*NB:NB])                  \
+                         depend(inout:akj[0, NB*NB])                 \
+                         depend(inout:ak_j[0:mm*NB])             \
+                         firstprivate(akk, akj, ak_j, mm, m)
         {
           // laswp
           int k1 = k*NB;
@@ -174,8 +179,10 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
 
   //Translate tile layout back to LAPACK layout
   tile2ge(A, pA, M, N, NB, M);
+
   //printf("My time is %f, Flops is %f\n", elapsed, 2.*N*N*N/(3.*elapsed*1e9));
   printf("%f ", 2.*N*N*N/(3.*elapsed*1e9));
+
 }
 
 int main(int argc, char *argv[]){
