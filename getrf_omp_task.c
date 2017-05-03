@@ -97,8 +97,8 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
   double time1, time2, elapsed;
   //Translate LAPACK layout to tile layout
   ge2tile(A, pA, M, N, NB, M);
-  
   time1 = omp_get_wtime();
+ 
   #pragma omp parallel
   #pragma omp master
   {
@@ -169,15 +169,13 @@ void dgetrf_omp(int M, int N, int NB, double *pA, int * ipiv){
     }
   } // End of parallel region
   
-  
-  
   time2 = omp_get_wtime();
   elapsed = time2 - time1;
-  
+
   //Translate tile layout back to LAPACK layout
   tile2ge(A, pA, M, N, NB, M);
-  
-  printf("My time is %f, Flops is %f\n", elapsed, 2.*N*N*N/(3.*elapsed*1e9));
+  //printf("My time is %f, Flops is %f\n", elapsed, 2.*N*N*N/(3.*elapsed*1e9));
+  printf("%f ", 2.*N*N*N/(3.*elapsed*1e9));
 }
 
 int main(int argc, char *argv[]){
@@ -215,8 +213,9 @@ int main(int argc, char *argv[]){
   time2 = omp_get_wtime();
   elapsed = time2 - time1;
   
-  printf("LAPACK time is %f, Flops is %f\n", elapsed, 2.*N*N*N/(3.*elapsed*1e9));
-  
+  //printf("LAPACK time is %f, Flops is %f\n", elapsed, 2.*N*N*N/(3.*elapsed*1e9));
+  printf("%f ", 2.*N*N*N/(3.*elapsed*1e9));
+  /*
   cblas_daxpy(M*N, neg, pA, 1, pB, 1);
   printf("Error: %e\n", cblas_dnrm2(M*N, pB, 1));
   
@@ -232,4 +231,5 @@ int main(int argc, char *argv[]){
     }
     printf("\n");
   }
+  */
 }
